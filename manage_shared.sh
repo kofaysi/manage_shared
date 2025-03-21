@@ -9,7 +9,7 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-# Function to check if a user exists
+# Function to check if a USER exists
 user_exists() {
     id "$1" &>/dev/null
 }
@@ -43,12 +43,12 @@ prompt_for_group_creation() {
     fi
 }
 
-# Function to add a user to the shared group
+# Function to add a USER to the shared group
 add_user_to_shared() {
-    local user=$1
+    local USER=$1
 
-    if ! user_exists "$user"; then
-        echo "User '$user' does not exist."
+    if ! user_exists "$USER"; then
+        echo "User '$USER' does not exist."
         return 1
     fi
 
@@ -56,60 +56,59 @@ add_user_to_shared() {
         prompt_for_group_creation
     fi
 
-    local bookmark=${2:-$BOOKMARK_NAME}
 
-    # Add user to group
-    # gpasswd -a "$user" "$SHARED_ACCOUNT"
+    # Add USER to group
     usermod -aG "$SHARED_ACCOUNT" "$USER"
-    mkdir -p "$USER_HOME/.config/gtk-3.0"
-    touch "$USER_HOME/.config/gtk-3.0/bookmarks"
 
-    create_link_in_user_home
+    create_link_in_USER_HOME
     create_bookmark_in_Nautilus
 }
 
-create_link_in_user_home() {
-    # Create symlink in user's home directory
-    local user_home="/home/$user"
-    ln -sf "$SHARED_HOME" "$user_home/$bookmark"
-    # ln -sf "/home/$SHARED_ACCOUNT" "$USER_HOME/Shared"
+create_link_in_USER_HOME() {
+    # Create symlink in USER's home directory
+    local USER_HOME="/home/$USER"
+    ln -sf "$SHARED_HOME" "$USER_HOME/$SHARED_ACCOUNT"
+
 }
 
 create_bookmark_in_Nautilus() {
     # Add bookmark
-    local bookmark_file="$user_home/.config/gtk-3.0/bookmarks"
+    local bookmark=$BOOKMARK_NAME
+    local bookmark_file="$USER_HOME/.config/gtk-3.0/bookmarks"
     mkdir -p "$(dirname "$bookmark_file")"
     touch "$bookmark_file"
     echo "$BOOKMARK_PATH" >> "$bookmark_file"
-    #echo "$BOOKMARK" >> "$USER_HOME/.config/gtk-3.0/bookmarks"
+    echo "Linked '/home/$SHARED_ACCOUNT' to '$bookmark_file' and added bookmark."
 }
 
 # Function to handle the creation of links and bookmarks
 setup_user_environment() {
-    local user=$1
-    local bookmark_name=${2:-"Shared"}
-    local user_home="/home/$user"
-    mkdir -p "$user_home/.config/gtk-3.0"
-    touch "$user_home/.config/gtk-3.0/bookmarks"
-    ln -sf "/home/$SHARED_ACCOUNT" "$user_home/$bookmark_name"
-    echo "file:///home/$SHARED_ACCOUNT" >> "$user_home/.config/gtk-3.0/bookmarks"
-    echo "Linked '/home/$SHARED_ACCOUNT' to '$user_home/$bookmark_name' and added bookmark."
+    local USER=$1
+    local SHARED_ACCOUNT=${2:-"Shared"}
+    local USER_HOME="/home/$USER"
+    local SHARED_HOME="/home/$SHARED_ACCOUNT"
+    local BOOKMARK_NAME
 }
 
-# Function to remove a user
+# Function to remove a USER
 remove_user_from_shared() {
-    local user=$1
+    local USER=$1
 
-    # Remove user from group
+    # Remove USER from group
     echo "Removing $USER from group, deleting symlink, and removing bookmark."
-    SHARED_LINK=$(find "$USER_HOME" -maxdepth 1 -type l -lname "/home/$SHARED_ACCOUNT" 2>/dev/null)
     gpasswd -d "$USER" "$SHARED_ACCOUNT"
-    rm -f "$SHARED_LINK"
-    sed -i "\|$BOOKMARK|d" "$BOOKMARKS_FILE"
 
+    remove_bookmark_from_user
+    remove_link_to_shared_from_user
+}
+
+remove_link_to_shared_from_user() {
+  SHARED_LINK=$(find "$USER_HOME" -maxdepth 1 -type l -lname "/home/$SHARED_ACCOUNT" 2>/dev/null)
+  rm -f "$SHARED_LINK"
+}
+remove_bookmark_from_user() {
     # Remove bookmark
-    local bookmark_file="$user_home/.config/gtk-3.0/bookmarks"
-    sed -i "\|$BOOKMARK_PATH|d" "$bookmark_file"
+    sed -i "\|$BOOKMARK|d" "$BOOKMARKS_FILE"
 }
 
 # Function to purge the shared directory
@@ -136,9 +135,9 @@ list_users_not_in_shared() {
     local all_users=$(getent passwd | awk -F: '{print $1}')
     local shared_users=$(getent group "$SHARED_ACCOUNT" | awk -F: '{print $4}' | tr ',' '\n')
 
-    for user in $all_users; do
-        if ! grep -qw "$user" <<< "$shared_users"; then
-            echo "$user"
+    for USER in $all_users; do
+        if ! grep -qw "$USER" <<< "$shared_users"; then
+            echo "$USER"
         fi
     done
 }
@@ -157,7 +156,7 @@ list_shared_accounts() {
 }
 
 create_shared_account() {
-    echo "Creating shared user and group: $SHARED_ACCOUNT"
+    echo "Creating shared USER and group: $SHARED_ACCOUNT"
     sudo useradd -m "$SHARED_ACCOUNT"
     sudo groupadd -f "$SHARED_ACCOUNT"
     sudo chmod 2770 "/home/$SHARED_ACCOUNT"
@@ -174,16 +173,17 @@ while [[ "$1" != "" ]]; do
             param_all_users_to_shared=TRUE
             shift 1
             ;;
+        -b | --bookmark)
+            BOOKMARK_NAME=${2:-$SHARED_ACCOUNT}
+            shift 2
+            ;;
         -r | --remove)
             param_user_to_remove_from_shared="$2"
             shift 2
             ;;
-        --remove-all)
-            param_all_users_from_shared=TRUE
-            shift 1
-            ;;
-        -p | --purge)
+        -p | --purge | --remove-all)
             purge_shared
+            param_all_users_from_shared=TRUE
             # no shifting needed here, we're done.
             exit 0
             ;;
@@ -214,9 +214,9 @@ while [[ "$1" != "" ]]; do
         *)
             echo "Usage: $0 [options] <parameters>"
             echo "Options:"
-            echo "  -a, --add <user>          Add a user to the shared group"
+            echo "  -a, --add <USER>          Add a USER to the shared group"
             echo "  -b, --bookmark <name>     Name the bookmark in Nautilus"
-            echo "  -r, --remove <user>       Remove a user from the shared group"
+            echo "  -r, --remove <USER>       Remove a USER from the shared group"
             echo "  -p, --purge               Purge the shared group"
             echo "  -u, --users in/out        List users in or out of the shared group"
             echo "  -s, --shared              List shared accounts"
