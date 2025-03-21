@@ -59,13 +59,20 @@ add_user_to_shared() {
     local bookmark=${2:-$BOOKMARK_NAME}
 
     # Add user to group
-    gpasswd -a "$user" "$SHARED_ACCOUNT"
+    # gpasswd -a "$user" "$SHARED_ACCOUNT"
+    usermod -aG "$SHARED_ACCOUNT" "$USER"
+    mkdir -p "$USER_HOME/.config/gtk-3.0"
+    touch "$USER_HOME/.config/gtk-3.0/bookmarks"
 
+    create_link_in_user_home
+    create_bookmark_in_Nautilus
+}
+
+create_link_in_user_home() {
     # Create symlink in user's home directory
     local user_home="/home/$user"
     ln -sf "$SHARED_HOME" "$user_home/$bookmark"
-
-    create_bookmark_in_Nautilus
+    # ln -sf "/home/$SHARED_ACCOUNT" "$USER_HOME/Shared"
 }
 
 create_bookmark_in_Nautilus() {
@@ -74,6 +81,7 @@ create_bookmark_in_Nautilus() {
     mkdir -p "$(dirname "$bookmark_file")"
     touch "$bookmark_file"
     echo "$BOOKMARK_PATH" >> "$bookmark_file"
+    #echo "$BOOKMARK" >> "$USER_HOME/.config/gtk-3.0/bookmarks"
 }
 
 # Function to handle the creation of links and bookmarks
@@ -93,11 +101,11 @@ remove_user_from_shared() {
     local user=$1
 
     # Remove user from group
-    gpasswd -d "$user" "$SHARED_ACCOUNT"
-
-    # Remove symlink
-    local user_home="/home/$user"
-    rm -f "$user_home/$BOOKMARK_NAME"
+    echo "Removing $USER from group, deleting symlink, and removing bookmark."
+    SHARED_LINK=$(find "$USER_HOME" -maxdepth 1 -type l -lname "/home/$SHARED_ACCOUNT" 2>/dev/null)
+    gpasswd -d "$USER" "$SHARED_ACCOUNT"
+    rm -f "$SHARED_LINK"
+    sed -i "\|$BOOKMARK|d" "$BOOKMARKS_FILE"
 
     # Remove bookmark
     local bookmark_file="$user_home/.config/gtk-3.0/bookmarks"
@@ -110,10 +118,16 @@ purge_shared() {
     rm -rf "$SHARED_HOME"
 }
 
+list_user() {
+  echo "Fetching system users excluding the shared account..."
+  USERS=$(awk -F: '$3 >= 1000 && $3 < 60000 {print $1}' /etc/passwd | grep -v "^$SHARED_ACCOUNT$")
+  echo "$USERS"
+}
 # Function to list users in the shared group
 list_users_in_shared() {
     echo "Listing users in the shared group:"
     getent group "$SHARED_ACCOUNT" | awk -F: '{print $4}'
+    # GROUP_USERS=$(getent group "$SHARED_ACCOUNT" | cut -d: -f4 | tr ',' ' ')
 }
 
 # Function to list users not in the shared group
