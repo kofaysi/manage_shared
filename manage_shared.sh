@@ -20,14 +20,14 @@ group_exists() {
 }
 
 # Function to create the shared group
-create_shared_group() {
-    local group_name=$1
-    groupadd "$group_name"
-    local group_dir="/home/$group_name"
-    mkdir -p "$group_dir"
-    chmod 2770 "$group_dir"
-    echo "Created group '$group_name' with home directory '$group_dir'."
-}
+#create_shared_group() {
+#    local group_name=$1
+#    groupadd "$group_name"
+#    local group_dir="/home/$group_name"
+#    mkdir -p "$group_dir"
+#    chmod 2770 "$group_dir"
+#    echo "Created group '$group_name' with home directory '$group_dir'."
+#}
 
 # Function to prompt for group creation
 prompt_for_group_creation() {
@@ -122,18 +122,20 @@ list_user() {
   USERS=$(awk -F: '$3 >= 1000 && $3 < 60000 {print $1}' /etc/passwd | grep -v "^$SHARED_ACCOUNT$")
   echo "$USERS"
 }
+
 # Function to list users in the shared group
 list_users_in_shared() {
-    echo "Listing users in the shared group:"
-    getent group "$SHARED_ACCOUNT" | awk -F: '{print $4}'
-    # GROUP_USERS=$(getent group "$SHARED_ACCOUNT" | cut -d: -f4 | tr ',' ' ')
+    local group="$1"
+    echo "Listing users in the shared group: $group"
+    getent group "$group" | cut -d: -f4 | tr ',' '\n'
 }
 
 # Function to list users not in the shared group
 list_users_not_in_shared() {
-    echo "Listing users not in the shared group:"
-    local all_users=$(getent passwd | awk -F: '{print $1}')
-    local shared_users=$(getent group "$SHARED_ACCOUNT" | awk -F: '{print $4}' | tr ',' '\n')
+    local group="$1"
+    echo "Listing users not in the shared group: $group"
+    local all_users=$(awk -F: '$3 >= 1000 && $3 < 60000 {print $1}' /etc/passwd | grep -v "^$group$")
+    local shared_users=$(getent group "$group" | cut -d: -f4 | tr ',' '\n')
 
     for USER in $all_users; do
         if ! grep -qw "$USER" <<< "$shared_users"; then
@@ -144,18 +146,27 @@ list_users_not_in_shared() {
 
 # Function to list all shared accounts
 list_shared_accounts() {
-    echo "Searching for shared accounts with setgid bit set..."
-    local -a SHARED_ACCOUNTS
-    mapfile -t SHARED_ACCOUNTS < <(find /home -maxdepth 1 -type d -perm -2000 -exec basename {} \;)
-    if [ -z "$SHARED_ACCOUNTS" ]; then
-        echo "No shared accounts found."
-    else
-        echo "Shared accounts:"
-        echo "$SHARED_ACCOUNTS"
-    fi
+  echo "Searching for shared accounts with setgid bit set..."
+  local -a SHARED_ACCOUNTS
+  mapfile -t SHARED_ACCOUNTS < <(find /home -maxdepth 1 -type d -perm -2000 -exec basename {} \;)
+
+  if [ "${#SHARED_ACCOUNTS[@]}" -eq 0 ]; then
+    echo "No shared accounts found."
+  else
+    echo "Shared accounts:"
+    for account in "${SHARED_ACCOUNTS[@]}"; do
+      echo "$account"
+    done
+  fi
 }
 
 create_shared_account() {
+    local SHARED_ACCOUNT="$1"
+    if [[ -z "$SHARED_ACCOUNT" ]]; then
+      echo "Error: group name is empty. Exiting."
+      exit 1
+    fi
+
     echo "Creating shared USER and group: $SHARED_ACCOUNT"
     sudo useradd -m "$SHARED_ACCOUNT"
     sudo groupadd -f "$SHARED_ACCOUNT"
@@ -176,6 +187,10 @@ while [[ "$1" != "" ]]; do
         -b | --bookmark)
             BOOKMARK_NAME=${2:-$SHARED_ACCOUNT}
             shift 2
+            ;;
+        -c | --create)
+            param_create_shared="TRUE"
+            shift 1
             ;;
         -r | --remove)
             param_user_to_remove_from_shared="$2"
@@ -199,11 +214,11 @@ while [[ "$1" != "" ]]; do
                 exit 1
             fi
             ;;
-        -s | --shared)
+        -l | --list)
             param_list_shared_accounts="TRUE"
             shift
             ;;
-        -n | --name)
+        -s | --shared)
             param_name_shared="$2"
             shift 2
             ;;
@@ -215,19 +230,53 @@ while [[ "$1" != "" ]]; do
             echo "Usage: $0 [options] <parameters>"
             echo "Options:"
             echo "  -a, --add <USER>          Add a USER to the shared group"
-            echo "  -b, --bookmark <name>     Name the bookmark in Nautilus"
+            echo "  --add-all                 Add all users to shared group"
+            echo "  -b, --bookmark <NAME>     Create a bookmark <NAME> in Nautilus"
+            echo "  -c, --create              Create a shared group and account"
             echo "  -r, --remove <USER>       Remove a USER from the shared group"
-            echo "  -p, --purge               Purge the shared group"
-            echo "  -u, --users in/out        List users in or out of the shared group"
-            echo "  -s, --shared              List shared accounts"
-            echo "  -n, --name                Assign a new name to the shared account"
+            echo "  -p, --purge               Purge the shared group and account"
+            echo "  -u, --users in/out        List users in[cluded] or ex[cluded] of the shared group"
+            echo "  -l, --list                List shared groups"
+            echo "  -s, --shared <NAME>       Name of the shared group and account"
             exit 1
             ;;
     esac
 done
 
-if [[ -z $param_name_shared ]];
+function missing_shared_name() {
+    echo "Name the shared account."
+};
+
+if [[ -z $param_name_shared ]]; then
   setup_user_environment "$param_name_shared"
-then
+else
   setup_user_environment $SHARED_ACCOUNT_DEFAULT
+fi
+
+if [[ "$param_list_users_in_shared" == "TRUE" ]]; then
+  if [[ -n "$param_name_shared" ]]; then
+	  list_users_in_shared "$param_name_shared"
+  else
+    missing_shared_name
+  fi
+fi
+
+if [[ "$param_list_users_not_in_shared" == "TRUE" ]]; then
+  if [[ -n "$param_name_shared" ]]; then
+    list_users_not_in_shared "$param_name_shared"
+  else
+    missing_shared_name
+  fi
+fi
+
+if [[ "$param_list_shared_accounts" == "TRUE" ]]; then
+  list_shared_accounts
+fi
+
+if [[ "$param_create_shared" == "TRUE" ]]; then
+  if [[ -n "$param_name_shared" ]]; then
+    create_shared_account "$param_name_shared"
+  else
+    missing_shared_name
+  fi
 fi
