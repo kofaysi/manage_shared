@@ -119,7 +119,7 @@ purge_shared() {
 
 list_user() {
   echo "Fetching system users excluding the shared account..."
-  USERS=$(awk -F: '$3 >= 1000 && $3 < 60000 {print $1}' /etc/passwd | grep -v "^$SHARED_ACCOUNT$")
+  USERS=$( get_all_system_users | grep -v "^$SHARED_ACCOUNT$")
   echo "$USERS"
 }
 
@@ -127,20 +127,53 @@ list_user() {
 list_users_in_shared() {
     local group="$1"
     echo "Listing users in the shared group: $group"
-    getent group "$group" | cut -d: -f4 | tr ',' '\n'
+    get_group_members "$group"
+}
+
+# Returns all members in a given group (as one username per line)
+get_group_members() {
+    local group_name="$1"
+    getent group "$group_name" | cut -d: -f4 | tr ',' '\n'
+}
+
+# Returns all directories under /home that have the setgid bit
+get_all_shared_accounts() {
+    find /home -maxdepth 1 -type d -perm -2000 -exec basename {} \;
+}
+
+# Returns all “normal” system users with UID >= 1000 and < 60000
+get_all_system_users() {
+    awk -F: '$3 >= 1000 && $3 < 60000 {print $1}' /etc/passwd
 }
 
 # Function to list users not in the shared group
 list_users_not_in_shared() {
     local group="$1"
     echo "Listing users not in the shared group: $group"
-    local all_users=$(awk -F: '$3 >= 1000 && $3 < 60000 {print $1}' /etc/passwd | grep -v "^$group$")
-    local shared_users=$(getent group "$group" | cut -d: -f4 | tr ',' '\n')
+    mapfile -t all_users < <( get_all_system_users | grep -v "^$group$" )
 
+    local shared_users=$( get_group_members "$group" )
+
+    # 3) Collect names of *all* setgid dirs under /home so we can skip them
+    local -a all_shared_accounts
+    mapfile -t all_shared_accounts < <( get_all_shared_accounts )
+
+    # 4) Print any user who is:
+    #    - in "all_users"
+    #    - NOT in this shared group
+    #    - NOT itself a shared account
     for USER in $all_users; do
-        if ! grep -qw "$USER" <<< "$shared_users"; then
-            echo "$USER"
+        # Skip if the user is in $SHARED_ACCOUNT’s group
+        if grep -qw "$USER" <<< "$shared_users"; then
+            continue
         fi
+
+        # Skip if the user’s name appears in the setgid (shared) dirs
+        if [[ "${all_shared_accounts[*]}" =~ "$USER" ]]; then
+            continue
+        fi
+
+        echo "$USER"
     done
 }
 
@@ -148,7 +181,7 @@ list_users_not_in_shared() {
 list_shared_accounts() {
   echo "Searching for shared accounts with setgid bit set..."
   local -a SHARED_ACCOUNTS
-  mapfile -t SHARED_ACCOUNTS < <(find /home -maxdepth 1 -type d -perm -2000 -exec basename {} \;)
+  mapfile -t SHARED_ACCOUNTS < <( get_all_shared_accounts )
 
   if [ "${#SHARED_ACCOUNTS[@]}" -eq 0 ]; then
     echo "No shared accounts found."
